@@ -1,235 +1,173 @@
-import requests # IMPORTANT: requires installation (pip install requests)
+import subprocess
+from json import JSONDecodeError
+import requests # requires installation (pip install requests)
 import sys
 import json
 import os
 import zipfile
-import re
 import shutil
 import configparser
+import time
+from tqdm import tqdm # requires installation (pip install tqdm)
 
-old_config_file = os.path.join(os.getcwd(), "data", "ersc_settings.ini")
-new_config_file = r"C:\Program Files (x86)\Steam\steamapps\common\ELDEN RING\Game\SeamlessCoop\ersc_settings.ini"
+# Define globals
+eldenring_dir = r"C:\Program Files (x86)\Steam\steamapps\common\ELDEN RING\Game"
+cwd = os.getcwd()
+repo_url = "https://api.github.com/repos/LukeYui/EldenRingSeamlessCoopRelease/releases/latest"
 
-def get_newest_version():
-    url = "https://api.github.com/repos/LukeYui/EldenRingSeamlessCoopRelease/releases/latest"
-
+def get_release():
     try:
-        response = requests.get(url, timeout=10)
+        # Get response from GitHub repository
+        response = requests.get(repo_url, timeout=7)
         response.raise_for_status()
 
+        # Extract release data from response
         release_data = response.json()
 
-        tag_name = release_data['tag_name']
-        release_name = release_data['name']
-        release_url = release_data['html_url']
-
-        needed_data = {
-            "tag_name": tag_name,
-            "release_name": release_name,
-            "release_url": release_url
-        }
-
-        print("Newest version:")
-        print("name: " + release_name)
-        print("url: " + release_url)
-        print()
-
-        return needed_data
+        return release_data
 
     except requests.Timeout:
-        print("The request timed out. Please try again later.")
+        # Exit, if request timed out
+        print("Request timed out. Exit in 5 seconds.")
+
+        time.sleep(5)
         sys.exit(1)
-    except requests.RequestException as err:
-        print(f"Error during the request: {err}")
-        sys.exit(1)
+
+    except requests.RequestException as e:
+        # Exit, if an error occured
+        print(f"Request error: {e}. Exit in 15 seconds.")
+
+        input("Press any key to exit. ")
+        sys.exit(1)   
+
+def get_appdata():
+    try:
+        # Try to get appdata out the appdata.json file
+    	with open(os.path.join(cwd, "appdata.json"), "r") as file:
+            appdata = json.load(file)
+
+            return appdata
+
+    except JSONDecodeError:
+        return None
 
 def compare_versions(new_version, old_version):
-    try:
-        v_new = list(map(int, new_version.split('.')))
-        v_old = list(map(int, old_version.split('.')))
+    # Converting versions from "vX.X.X" to [X, X, X]
+    new_v_list = list(map(int, new_version[1:].split(".")))
+    old_v_list = list(map(int, old_version[1:].split(".")))
 
-        for i in range(max(len(v_new), len(v_old))):
-            v_new_part = v_new[i] if i < len(v_new) else 0
-            v_old_part = v_old[i] if i < len(v_old) else 0
+    if new_v_list[0] > old_v_list[0]:
+        # If major version is higher than the installed
+        return True
+    
+    elif new_v_list[1] > old_v_list[1]:
+        # If minor version is higher than the installed
+        return True
 
-            if v_new_part > v_old_part:
-                return True
-            elif v_new_part < v_old_part:
-                return False
-        return False
-    except ValueError as e:
-        print(f"Version comparison error: {e}")
-        sys.exit(1)
+    elif new_v_list[2] > old_v_list[2]:
+        # If patch version is higher than the installed
+        return True
 
-def search_updates():
-    print("Searching for newest release...")
-    needed_data = get_newest_version()
-    new_version = needed_data["tag_name"][1:]
-
-    current_installation_path = os.path.join(os.getcwd(), "data", "current_installation.json")
-    try:
-        with open(current_installation_path, "r") as file:
-            current_data = json.load(file)
-            old_version = current_data["tag_name"][1:]
-    except json.JSONDecodeError:
-        try:
-            if os.path.exists(r"C:\Program Files (x86)\Steam\steamapps\common\ELDEN RING\Game\SeamlessCoop"):
-                print("The SeamlessCoop Mod seems to be installed but not with the SeamlessCoop Updater.")
-                print("""Choose an option...
-[1] Enter the current version manually
-[2] Update anyway
-[3] Exit
-                """)
-                first_install = input("> ")
-                if first_install == "1":
-                    print("Enter installed version [vX.X.X]...")
-                    old_version = input("> ")[1:]
-                    pattern = r"^\d+\.\d+\.\d+$"
-                    if re.match(pattern, old_version):
-                        compare_versions(new_version, old_version)
-                    else:
-                        print("Invalid input [vX.X.X]. Exiting.")
-                        sys.exit(1)
-                elif first_install == "2":
-                    old_version = "v1.0.0"[1:]
-                    install_ersc(needed_data, current_installation_path)
-                elif first_install == "3":
-                    sys.exit(0)
-                else:
-                    print("Invalid input [1/2/3]. Exiting.")
-                    sys.exit(1)
-            else:
-                print("It looks as if no version of the ERSC has been installed yet. Continuing...")
-                old_version = "v1.0.0"[1:]
-                install_ersc(needed_data, current_installation_path)
-        except OSError as e:
-            print(f"File error: {e}")
-            sys.exit(1)
-    except FileNotFoundError as e:
-        print(f"Current installation file not found: {e}")
-        sys.exit(1)
-
-    print("Comparing versions...")
-    upgrade = compare_versions(new_version, old_version)
-    if upgrade:
-        print(f"New update {needed_data['release_name']} available. Do you want to install it? [Y/n]")
-        want_install = input("> ")
-        if want_install in ["Y", "y", ""]:
-            install_ersc(needed_data, current_installation_path)
-        elif want_install in ["n", "N"]:
-            sys.exit(0)
-        else:
-            print("Invalid input [Y/n]. Exiting.")
-            sys.exit(1)
     else:
-        print("ERSC is already up to date. Exiting.")
-        sys.exit(0)
+        # If the version isn't newer
+        return False
 
-def read_config(filename):
-    config = configparser.ConfigParser()
-    try:
-        config.read(filename)
+print("Searching for newest release and current installation...")
 
-        all_items = set()
-        for section in config.sections():
-            all_items.update(config.items(section))
-        return all_items
-    except configparser.Error as e:
-        print(f"Error reading the config file: {e}")
-        sys.exit(1)
+# Get newest version
+release_data = get_release()
+new_version = release_data["tag_name"] # vX.X.X
+print(f"Newest release: {release_data["name"]}")
 
-def compare_configs():
-    try:
-        old_config = read_config(old_config_file)
-        new_config = read_config(new_config_file)
+# Try to get current installation
+try:
+    old_version = get_appdata()["current_installation"]
+    print(f"Current installation: {old_version}")
+except TypeError:
+    # If there is no current installation
+    old_version = "v0.0.0"
+    print("Mod is not, or manually installed. Installing anyway. ")
 
-        old_keys = {key for key, value in old_config}
-        new_keys = {key for key, value in new_config}
+# Check, if a new install is necessary
+want_install = compare_versions(new_version, old_version)
 
-        only_in_old = old_keys - new_keys
-        only_in_new = new_keys - old_keys
-
-        if only_in_old and only_in_new:
-            print("""There are new options in the ersc_settings.ini file. 
-The updater cannot replace the file with the old one because of this. 
-You must therefore make the settings yourself.""")
-            input("Press any key to continue...")
-            return False
-        else:
-            print("Configs are equal.")
-            return True
-    except Exception as e:
-        print(f"Error comparing config files: {e}")
-        sys.exit(1)
-
-def install_ersc(needed_data, current_installation_path):
-    elden_ring_path = r"C:\Program Files (x86)\Steam\steamapps\common\ELDEN RING\Game"
-
-    print("Do you want to keep your ersc_settings.ini file? [Y/n]")
-    keep_settings = input("> ")
-    if keep_settings in ["Y", "y", ""]:
-        try:
-            print("Saving config...")
-            shutil.move(new_config_file, old_config_file)
-        except OSError as e:
-            print(f"Error moving the config file: {e}")
-            sys.exit(1)
-
-    url = f"https://github.com/LukeYui/EldenRingSeamlessCoopRelease/releases/download/{needed_data['tag_name']}/ersc.zip"
-    print(f"Downloading files from {url}")
-    file_name = f"ersc {needed_data['tag_name']}.zip"
-    file_path = os.path.join(os.getcwd(), "data", file_name)
-
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-
-        with open(file_path, 'wb') as file:
-            file.write(response.content)
-        print(f"Download of file successful: {file_path}")
-    except requests.Timeout:
-        print("The request timed out. Please try again later.")
-        sys.exit(1)
-    except requests.RequestException as err:
-        print(f"Error downloading the file: {err}")
-        sys.exit(1)
-    except OSError as e:
-        print(f"File error: {e}")
-        sys.exit(1)
-
-    try:
-        with zipfile.ZipFile(file_path, 'r') as zip_ref:
-            zip_ref.extractall(elden_ring_path)
-        os.remove(file_path)
-    except zipfile.BadZipFile as e:
-        print(f"Error extracting the ZIP file: {e}")
-        sys.exit(1)
-
-    if keep_settings in ["Y", "y", ""]:
-        print("Comparing old and new ersc_settings.ini...")
-        if compare_configs():
-            try:
-                print("Overwriting new ersc_settings.ini...")
-                shutil.move(old_config_file, new_config_file)
-            except OSError as e:
-                print(f"Error overwriting the config file: {e}")
-                sys.exit(1)
-
-    try:
-        with open(current_installation_path, "w") as file:
-            json.dump(needed_data, file, indent=4)
-    except OSError as e:
-        print(f"Error writing the current installation data: {e}")
-        sys.exit(1)
-
-    print("New version installed successfully.")
-    input("Press any key to exit. ")
+if want_install is not True:
+    print("Requirements already met. Continue.")
     sys.exit(0)
 
-print("""Welcome to the Elden Ring SeamlessCoop Updater
+shutil.copy(os.path.join(eldenring_dir, "SeamlessCoop", "ersc_settings.ini"), cwd)
 
-Important: This project is an updater for the SeamlessCoop Mod for Elden Ring, which is created by LukeYui. 
-It was not coded by or in cooperation with the developer of the mod and is not officially supported. 
-Credits to the Mod: https://github.com/LukeYui/EldenRingSeamlessCoopRelease
-""")
-search_updates()
+download_url = release_data["assets"][0]["browser_download_url"]
+download_response = requests.get(download_url, stream=True)
+
+# Check, if download was not successfully
+if not download_response.status_code == 200:
+    print(f"HTTP Error: {str(download_response.status_code)}: {download_response.reason}. Exit in 5 seconds.")
+
+    time.sleep(5)
+    sys.exit(download_response.status_code)
+
+# Get total file size
+total_size = int(download_response.headers.get("Content-Length", 0))
+
+# Download file and show progress
+with open(os.path.join(eldenring_dir, "ersc.zip"), "wb") as file:
+    with tqdm(total=total_size, unit="B", unit_scale=True, desc="Downloading release") as progress_bar:
+        for chunk in download_response.iter_content(chunk_size=1024):
+            if chunk:
+                file.write(chunk)
+                progress_bar.update(len(chunk))
+
+print("Installing files...")
+# Extract archive to a temporary directory
+with zipfile.ZipFile(os.path.join(eldenring_dir, "ersc.zip"), "r") as zip_ref:
+    zip_ref.extractall(os.path.join(eldenring_dir))
+
+# Read new and old settings
+new_settings = configparser.ConfigParser()
+new_settings.read(os.path.join(eldenring_dir, "SeamlessCoop", "ersc_settings.ini"))
+
+old_settings = configparser.ConfigParser()
+old_settings.read(os.path.join(cwd, "ersc_settings.ini"))
+
+# Compare new and old settings, to find new options
+new_things = {}
+for section in new_settings:
+    if section in old_settings:
+        # If section exists in old settings, compare options
+        for option in new_settings[section]:
+            if option in old_settings[section]:
+                # If option exists in old settings, copy value from old settings
+                new_settings[section][option] = old_settings[section][option]
+            else:
+                # If option does not exist in old settings, add it to new settings
+                new_things[section][option] = new_settings[section][option]
+    else:
+        # If section does not exist in old settings, add it to new settings
+        new_things[section] = new_settings[section]
+
+# If there are some, print the new options
+if new_things:
+    print(f"There are new options in the ersc_settings.ini: {new_things}. Continuing in 5 seconds. ")
+    time.sleep(5)
+
+# Write the settings
+with open(os.path.join(eldenring_dir, "SeamlessCoop", "ersc_settings.ini"), "w") as file:
+    new_settings.write(file)
+
+# Write new version to appdata.json
+print("Updating appdata...")
+appdata = {"current_installation": new_version}
+with open(os.path.join(cwd, "appdata.json"), "w") as file:
+    json.dump(appdata, file)
+
+# Remove old files
+print("Cleaning up...")
+os.remove(os.path.join(cwd, "ersc_settings.ini"))
+os.remove(os.path.join(eldenring_dir, "ersc.zip"))
+
+# Launch the game
+print("Installed release successfully. Launching modded Elden Ring in 5 seconds. ")
+time.sleep(5)
+subprocess.Popen([os.path.join(eldenring_dir, "ersc_launcher.exe")], cwd=eldenring_dir)
+sys.exit(0)
