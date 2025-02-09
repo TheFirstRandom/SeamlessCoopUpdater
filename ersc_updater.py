@@ -92,7 +92,8 @@ except TypeError:
 want_install = compare_versions(new_version, old_version)
 
 if want_install is not True:
-    print("Requirements already met. Continue.")
+    print("Requirements already met. Launching modded Elden Ring in 5 seconds.")
+    subprocess.Popen([os.path.join(eldenring_dir, "ersc_launcher.exe")], cwd=eldenring_dir)
     sys.exit(0)
 
 shutil.copy(os.path.join(eldenring_dir, "SeamlessCoop", "ersc_settings.ini"), cwd)
